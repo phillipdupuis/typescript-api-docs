@@ -1,5 +1,11 @@
 import React, { useState, useMemo, useCallback } from "react"
-import { Spinner, Code, Button, ButtonGroup } from "@chakra-ui/react"
+import {
+  Spinner,
+  Code,
+  Button,
+  ButtonGroup,
+  useMediaQuery,
+} from "@chakra-ui/react"
 import { useTransitionTimeout } from "src/common/hooks/useTransitionTimeout"
 import { useTsApiDocs } from "src/tsApiDocs"
 import { usePrettier } from "src/prettier/hooks"
@@ -21,6 +27,7 @@ export const TsModelDetail: React.FC<{ modelId: string }> = ({ modelId }) => {
   const { models } = useTsApiDocs()
   const prettier = usePrettier()
   const { format } = prettier
+  const [widerThan50em] = useMediaQuery("(min-width: 50em)")
   const [copied, setCopied] = useTransitionTimeout(1500)
   const [showDependencies, setShowDependencies] = useState(false)
 
@@ -69,16 +76,15 @@ export const TsModelDetail: React.FC<{ modelId: string }> = ({ modelId }) => {
       w="full"
       p="1"
       position="relative"
+      overflowX="auto"
       maxW={`${prettier.options.printWidth ?? 80}em`}
     >
-      {code ? padLines(code) : code}
       <ButtonGroup
         size="sm"
         variant="outline"
         spacing="2"
-        position="absolute"
         top="0.5em"
-        right="0.5em"
+        {...(widerThan50em ? { position: "absolute", right: "0.5em" } : {})}
       >
         {dependencies.length > 0 && (
           <Button
@@ -92,6 +98,8 @@ export const TsModelDetail: React.FC<{ modelId: string }> = ({ modelId }) => {
           {copied ? "Copied" : "Copy"}
         </Button>
       </ButtonGroup>
+      {!widerThan50em && <br />}
+      {code && padLines(code)}
     </Code>
   )
 }

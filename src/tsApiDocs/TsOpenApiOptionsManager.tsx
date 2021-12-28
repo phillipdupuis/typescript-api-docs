@@ -25,10 +25,25 @@ function isRequiredOption(openApiOption: string): boolean {
 }
 
 export const TsOpenApiOptionsManager: React.FC = () => {
+  const { isOpen, onOpen, onClose } = useDisclosure()
   const { openApi, setOpenApi, openApiOptions, setOpenApiOptions } =
     useTsApiDocs()
-  const { isOpen, onOpen, onClose } = useDisclosure()
   const [newEntry, setNewEntry] = useState("")
+
+  const addOption = () => {
+    if (newEntry && !openApiOptions.includes(newEntry)) {
+      setOpenApiOptions([...openApiOptions, newEntry])
+      setNewEntry("")
+    }
+  }
+
+  const deleteOption = (o: string) => {
+    setOpenApiOptions(openApiOptions.filter((v) => v !== o))
+    if (openApi === o) {
+      setOpenApi(undefined)
+    }
+  }
+
   return (
     <>
       <Button
@@ -40,7 +55,7 @@ export const TsOpenApiOptionsManager: React.FC = () => {
       >
         Add/remove APIs
       </Button>
-      <Drawer size="lg" isOpen={isOpen} onClose={onClose} placement="left">
+      <Drawer size="xl" isOpen={isOpen} onClose={onClose} placement="left">
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
@@ -61,22 +76,26 @@ export const TsOpenApiOptionsManager: React.FC = () => {
                   key={`OptionsList${o}`}
                   display="flex"
                   flexDirection="row"
+                  borderBottom="1px solid"
+                  borderBottomColor="inherit"
                 >
-                  <Link flex="1" href={o} isExternal>
+                  <Link
+                    flex="1"
+                    href={o}
+                    isExternal
+                    overflowWrap="anywhere"
+                    pr="0.5em"
+                  >
                     {o}
                   </Link>
                   <IconButton
                     aria-label={`Delete option: ${o}`}
                     icon={<DeleteIcon />}
                     disabled={isRequiredOption(o)}
-                    onClick={() => {
-                      setOpenApiOptions(openApiOptions.filter((v) => v !== o))
-                      if (openApi === o) {
-                        setOpenApi(undefined)
-                      }
-                    }}
+                    onClick={() => deleteOption(o)}
                     size="sm"
                     variant="outline"
+                    mb="0.5em"
                   />
                 </ListItem>
               ))}
@@ -88,17 +107,17 @@ export const TsOpenApiOptionsManager: React.FC = () => {
                   placeholder="URL"
                   value={newEntry}
                   onChange={(e) => setNewEntry(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      addOption()
+                    }
+                  }}
                 />
                 <IconButton
                   aria-label={`Add option: ${newEntry}`}
-                  disabled={!newEntry}
                   icon={<AddIcon />}
-                  onClick={() => {
-                    if (!openApiOptions.includes(newEntry)) {
-                      setOpenApiOptions([...openApiOptions, newEntry])
-                    }
-                    setNewEntry("")
-                  }}
+                  disabled={!newEntry || openApiOptions.includes(newEntry)}
+                  onClick={addOption}
                   size="md"
                   colorScheme="blue"
                 />
