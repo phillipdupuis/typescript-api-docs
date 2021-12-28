@@ -3,6 +3,7 @@ import {
   Options as JsonSchemaToTsOptions,
   JSONSchema,
 } from "json-schema-to-typescript"
+import { deburr, upperFirst, trim } from "lodash"
 import { OpenAPI, OpenAPIV2, OpenAPIV3 } from "openapi-types"
 import SwaggerParser from "@apidevtools/swagger-parser"
 import { TsModel, TsEndpoint, TsApiDocs, EntityMap } from "src/tsApiDocs/models"
@@ -16,19 +17,182 @@ type NamedSchemaObject = SchemaObject & {
   title: NonNullable<SchemaObject["title"]>
 }
 
-/**
- * Utility functions
- */
-
-function asNamedSchema(
-  s: SchemaObject | NamedSchemaObject,
-  name: string
-): NamedSchemaObject {
-  return Object.assign(s, { title: name })
+function schemaId(s: NamedSchemaObject) {
+  return s.title.toLowerCase()
 }
 
-function getSchemaId(s: NamedSchemaObject): Lowercase<string> {
-  return s.title.toLowerCase()
+class SchemaNormalizer {
+  schemas: Set<NamedSchemaObject>
+  endpoints: EntityMap<TsEndpoint>
+  usedTitles: Set<string>
+
+  constructor() {
+    this.schemas = new Set<NamedSchemaObject>()
+    this.endpoints = {}
+    this.usedTitles = new Set<string>()
+  }
+
+  extractEndpointsAndSchemas(apiDoc: OpenAPI.Document): {
+    schemas: Set<NamedSchemaObject>
+    endpoints: EntityMap<TsEndpoint>
+  } {
+    this._processComponents(apiDoc)
+    this._processDefinitions(apiDoc)
+    this._processPaths(apiDoc)
+    this._deleteNestedTitles()
+    for (const s of Array.from(this.schemas)) {
+      replaceNestedSchemasWithRefs(s, this.schemas)
+    }
+    return { schemas: this.schemas, endpoints: this.endpoints }
+  }
+
+  _processComponents(apiDoc: OpenAPI.Document) {
+    if (!isOpenAPIV3Document(apiDoc) || !apiDoc.components) {
+      return
+    }
+    for (const [name, s] of definedEntries(apiDoc.components.schemas)) {
+      this._normalize(s, { title: name })
+    }
+    for (const [name, response] of definedEntries(
+      apiDoc.components.responses
+    )) {
+      this._normalize(getContentSchema(response.content), { title: name })
+    }
+    for (const [name, requestBody] of definedEntries(
+      apiDoc.components.requestBodies
+    )) {
+      this._normalize(getContentSchema(requestBody.content), { title: name })
+    }
+  }
+
+  _processDefinitions(apiDoc: OpenAPI.Document) {
+    if (isOpenAPIV3Document(apiDoc) || !apiDoc.definitions) {
+      return
+    }
+    for (const [name, s] of definedEntries(apiDoc.definitions)) {
+      this._normalize(s, { title: name })
+    }
+  }
+
+  _processPaths(apiDoc: OpenAPI.Document) {
+    for (const path in apiDoc.paths) {
+      const pathSchema = apiDoc.paths[path]
+      if (!isDefined(pathSchema)) {
+        continue
+      }
+      for (const method of Object.keys(pathSchema).filter(isHttpMethod)) {
+        const operation = pathSchema[method]
+        if (!isDefined(operation)) {
+          continue
+        }
+        const requestSchema = getRequestSchema(operation)
+        const responseSchemas = getResponseSchemas(operation)
+        this._normalize(requestSchema, { title: `${path}_RequestBody` })
+        for (const [statusCode, s] of Object.entries(responseSchemas)) {
+          this._normalize(s, { title: `$${path}_${statusCode}_ResponseBody` })
+        }
+        const endpointId = `${path}::${method}`.toLowerCase()
+        this.endpoints[endpointId] = {
+          id: endpointId,
+          title: path,
+          path,
+          method,
+          requestModel: isDefined(requestSchema)
+            ? schemaId(requestSchema as NamedSchemaObject)
+            : undefined,
+          responseModels: Object.fromEntries(
+            Object.entries(responseSchemas).map(([statusCode, s]) => [
+              statusCode,
+              schemaId(s as NamedSchemaObject),
+            ])
+          ),
+        }
+      }
+    }
+  }
+
+  _normalize(
+    schema: SchemaObject | ReferenceObject | undefined,
+    overrides: { title: string; description?: string }
+  ) {
+    if (isDefined(schema) && !this._isNormalized(schema)) {
+      const { title, description } = overrides
+      schema.title = this._toSafeTitle(title)
+      if (description !== undefined) {
+        schema.description = description
+      }
+      this.schemas.add(schema as NamedSchemaObject)
+    }
+  }
+
+  _isNormalized(schema: SchemaObject): boolean {
+    return this.schemas.has(schema as NamedSchemaObject)
+  }
+
+  _toSafeTitle(value: string): string {
+    let title = toSafeTsIdentifier(value)
+    if (title.startsWith("$")) {
+      title = title.slice(1)
+    }
+    if (!title) {
+      title = "NoTitle"
+    }
+    if (this.usedTitles.has(title)) {
+      let counter = 1
+      while (this.usedTitles.has(`${title}${counter}`)) {
+        counter++
+      }
+      title = `${title}${counter}`
+    }
+    this.usedTitles.add(title)
+    return title
+  }
+
+  /**
+   * Removes the titles from the nested schemas, since keeping them results
+   * in a distinct type definition for each prop (which can be a LOT of noise).
+   */
+  _deleteNestedTitles(): void {
+    const topLevelSchemas = this.schemas
+    const nestedSchemas = Array.from(topLevelSchemas)
+      .flatMap((s) => Array.from(getSchemaDependencies(s)))
+      .filter((s) => !topLevelSchemas.has(s as NamedSchemaObject))
+    for (const s of nestedSchemas) {
+      if ("title" in s) {
+        delete s.title
+      }
+    }
+  }
+}
+
+/**
+ * Copied from json-schema-to-typescript src/utils, where it is named "toSafeString".
+ * Converts a string that might contain spaces or special characters to one that
+ * can safely be used as a TypeScript interface or enum name.
+ */
+function toSafeTsIdentifier(string: string) {
+  // identifiers in javaScript/ts:
+  // First character: a-zA-Z | _ | $
+  // Rest: a-zA-Z | _ | $ | 0-9
+
+  return upperFirst(
+    // remove accents, umlauts, ... by their basic latin letters
+    deburr(string)
+      // replace chars which are not valid for typescript identifiers with whitespace
+      .replace(/(^\s*[^a-zA-Z_$])|([^a-zA-Z_$\d])/g, " ")
+      // uppercase leading underscores followed by lowercase
+      .replace(/^_[a-z]/g, (match) => match.toUpperCase())
+      // remove non-leading underscores followed by lowercase (convert snake_case)
+      .replace(/_[a-z]/g, (match) =>
+        match.substr(1, match.length).toUpperCase()
+      )
+      // uppercase letters after digits, dollars
+      .replace(/([\d$]+[a-zA-Z])/g, (match) => match.toUpperCase())
+      // uppercase first letter after whitespace
+      .replace(/\s+([a-zA-Z])/g, (match) => trim(match.toUpperCase()))
+      // remove remaining whitespace
+      .replace(/\s/g, "")
+  )
 }
 
 /**
@@ -59,54 +223,21 @@ function entryIsDefined<T extends object>(
   return isDefined(v[1])
 }
 
+function definedEntries<T extends object>(
+  v: Record<string, T | undefined | ReferenceObject> | undefined
+): Entry<T>[] {
+  if (!v) {
+    return []
+  }
+  return Object.entries(v).filter(entryIsDefined)
+}
+
 function isHttpMethod(v: any): v is OpenAPIV2.HttpMethods {
   return Object.values(OpenAPIV2.HttpMethods).includes(v)
 }
 
 function isBodyParameterObject(v: any): v is OpenAPIV2.InBodyParameterObject {
   return isDefined(v) && v.in === "body" && isDefined(v.schema)
-}
-
-/**
- * Returns a set of the schemas which were explicitly named by the openapi schema.
- */
-function getNamedSchemas(apiDoc: OpenAPI.Document): Set<NamedSchemaObject> {
-  if (isOpenAPIV3Document(apiDoc)) {
-    const namedSchemas = new Set<NamedSchemaObject>()
-    const alreadyNamed = (s: SchemaObject) =>
-      namedSchemas.has(s as NamedSchemaObject)
-    // First, add the plain-old component/schemas definitions.
-    Object.entries(apiDoc.components?.schemas ?? {})
-      .filter(entryIsDefined)
-      .forEach(([name, s]) => {
-        namedSchemas.add(asNamedSchema(s, name))
-      })
-    // Next, the named response schemas
-    Object.entries(apiDoc.components?.responses ?? {})
-      .filter(entryIsDefined)
-      .forEach(([responseName, response]) => {
-        const s = getContentSchema(response.content)
-        if (isDefined(s) && !alreadyNamed(s)) {
-          namedSchemas.add(asNamedSchema(s, responseName))
-        }
-      })
-    // Finally, the named request body schemas
-    Object.entries(apiDoc.components?.requestBodies ?? {})
-      .filter(entryIsDefined)
-      .forEach(([requestBodyName, requestBody]) => {
-        const s = getContentSchema(requestBody.content)
-        if (isDefined(s) && !alreadyNamed(s)) {
-          namedSchemas.add(asNamedSchema(s, requestBodyName))
-        }
-      })
-    return namedSchemas
-  } else {
-    return new Set(
-      Object.entries(apiDoc.definitions ?? {})
-        .filter(entryIsDefined)
-        .map(([name, s]) => asNamedSchema(s, name))
-    )
-  }
 }
 
 /**
@@ -173,74 +304,6 @@ function getResponseSchemas(
 }
 
 /**
- * Finds and returns schemas which aren't explicitly named in
- * "components" or "definitions" but which are used to define
- * request or response bodies.
- */
-function getAnonymousSchemas(
-  apiDoc: OpenAPI.Document,
-  namedSchemas: Set<NamedSchemaObject>
-): Set<NamedSchemaObject> {
-  const anonymousSchemas = new Set<SchemaObject>()
-  for (const [path, pathSchema] of Object.entries(apiDoc.paths).filter(
-    entryIsDefined
-  )) {
-    for (const method of Object.keys(pathSchema).filter(isHttpMethod)) {
-      const operation = pathSchema[method]!
-      // Request schema
-      const requestSchema = getRequestSchema(operation)
-      if (
-        requestSchema &&
-        !namedSchemas.has(requestSchema as NamedSchemaObject)
-      ) {
-        if (!requestSchema.description) {
-          requestSchema.description = `Request body for ${method.toUpperCase()} ${path}`
-        }
-        anonymousSchemas.add(requestSchema)
-      }
-      // Response schemas
-      for (const [statusCode, responseSchema] of Object.entries(
-        getResponseSchemas(operation)
-      )) {
-        if (
-          responseSchema &&
-          !namedSchemas.has(responseSchema as NamedSchemaObject)
-        ) {
-          if (!responseSchema.description) {
-            responseSchema.description = `${statusCode} response body for ${method.toUpperCase()} ${path}`
-          }
-          anonymousSchemas.add(responseSchema)
-        }
-      }
-    }
-  }
-  return new Set(
-    Array.from(anonymousSchemas.values()).map((s, i) =>
-      asNamedSchema(s, `anonymous_${i}`)
-    )
-  )
-}
-
-/**
- * Tweaks schema objects (if needed) so the generated typescript definitions come out nicely.
- * Cleaning requires mutation, since the compiler requires that references not change.
- * Currently we just remove the titles from the nested schemas, since keeping
- * them results in a distinct type for each prop (which can be a LOT of noise).
- */
-function cleanSchemas(topLevelSchemas: Set<SchemaObject>): void {
-  const nestedSchemas = new Set(
-    Array.from(topLevelSchemas)
-      .flatMap((s) => Array.from(getSchemaDependencies(s)))
-      .filter((s) => !topLevelSchemas.has(s))
-  )
-  for (const s of Array.from(nestedSchemas)) {
-    if ("title" in s) {
-      delete s.title
-    }
-  }
-}
-
-/**
  * Deeply get all schema objects (self, children, etc.) referenced by a schema.
  */
 function getSchemaDependencies(schema: SchemaObject): Set<SchemaObject> {
@@ -276,25 +339,44 @@ function getSchemaDependencies(schema: SchemaObject): Set<SchemaObject> {
 }
 
 /**
+ * Mutates schemas in-place, converting the nested schema objects to $refs.
+ * This is necessary before generating typescript definitions because the
+ * circular references will only work if they're in the $ref form.
+ */
+function replaceNestedSchemasWithRefs<T>(
+  obj: T,
+  schemas: Set<NamedSchemaObject>
+): void {
+  if (typeof obj === "object" && obj !== null) {
+    for (const [k, v] of Object.entries(obj)) {
+      if (schemas.has(v)) {
+        Object.assign(obj, {
+          [k]: { $ref: `#/definitions/${v.title.toLowerCase()}` },
+        })
+      } else {
+        replaceNestedSchemasWithRefs(v, schemas)
+      }
+    }
+  }
+}
+
+/**
  * Parses an OpenAPI schema and returns a record mapping component names
  * to the corresponding typescript interface definitions.
  */
 async function getTsModels(
-  namedSchemas: Set<NamedSchemaObject>,
-  anonymousSchemas: Set<NamedSchemaObject>
+  schemas: Set<NamedSchemaObject>
 ): Promise<EntityMap<TsModel>> {
-  const schemaMap = Object.fromEntries(
-    [...Array.from(namedSchemas), ...Array.from(anonymousSchemas)].map((s) => [
-      getSchemaId(s),
-      s,
-    ])
+  const definitions = Object.fromEntries(
+    Array.from(schemas).map((s) => [schemaId(s), s])
   )
-  const topLevelTitle = "_toplevelobject_"
-  const jsonSchema: JSONSchema = {
-    title: topLevelTitle,
+  const masterSchema: JSONSchema = {
+    title: "_toplevelobject_",
     type: "object",
     // @ts-ignore: For V2, properties typed as IJsonSchema should actually be SchemaObject: https://swagger.io/specification/v2/
-    properties: { ...schemaMap },
+    definitions,
+    // @ts-ignore: For V2, properties typed as IJsonSchema should actually be SchemaObject: https://swagger.io/specification/v2/
+    properties: definitions,
     additionalProperties: false,
   }
   const options: Partial<JsonSchemaToTsOptions> = {
@@ -305,12 +387,12 @@ async function getTsModels(
     format: false,
     ignoreMinAndMaxItems: true, // because of https://github.com/bcherny/json-schema-to-typescript/issues/372
   }
-  const ts = await compileJsonSchemaToTs(jsonSchema, "", options)
+  const ts = await compileJsonSchemaToTs(masterSchema, "", options)
   return extractTsModels(
     ts,
-    schemaMap,
-    anonymousSchemas,
-    new Set([topLevelTitle])
+    definitions,
+    new Set<NamedSchemaObject>(),
+    new Set([masterSchema.title!])
   )
 }
 
@@ -325,7 +407,7 @@ function extractTsModels(
 ): EntityMap<TsModel> {
   const models: EntityMap<TsModel> = {}
   const parser = new TsFileParser(source)
-  const anonymousIds = new Set(Array.from(anonymousSchemas).map(getSchemaId))
+  const anonymousIds = new Set(Array.from(anonymousSchemas).map((s) => s.title))
   const titleRegExp =
     /^(?<prefix>\s*export\s+(interface|type)\s+)(?<title>\w+)(?<suffix>\s+)/m
   let match = parser.next()
@@ -347,43 +429,12 @@ function extractTsModels(
         autoGenerated,
         dependencies: Array.from(getSchemaDependencies(schemaMap[id]!))
           .filter(isNamedSchema)
-          .map(getSchemaId),
+          .map(schemaId),
       }
     }
     match = parser.next()
   }
   return models
-}
-
-/**
- * Parses an OpenAPI schema and returns a record mapping endpoints to the
- * typescript interfaces which represent the request and response payloads.
- */
-function getTsEndpoints(apiDoc: OpenAPI.Document): EntityMap<TsEndpoint> {
-  const endpoints: EntityMap<TsEndpoint> = {}
-  for (const path in apiDoc.paths) {
-    const pathSchema = apiDoc.paths[path]!
-    for (const method of Object.keys(pathSchema).filter(isHttpMethod)) {
-      const id = `${path}::${method}`.toLowerCase()
-      const operation = pathSchema[method]!
-      const requestSchema = getRequestSchema(operation)
-      const responseSchemas = getResponseSchemas(operation)
-      endpoints[id] = {
-        id,
-        title: path,
-        path,
-        method,
-        requestModel: requestSchema?.title?.toLowerCase(),
-        responseModels: Object.fromEntries(
-          Object.entries(responseSchemas).map(([statusCode, schema]) => [
-            statusCode,
-            schema.title!.toLowerCase(),
-          ])
-        ),
-      }
-    }
-  }
-  return endpoints
 }
 
 /**
@@ -394,13 +445,8 @@ export async function parseOpenAPI(
   api: string | OpenAPIV3.Document | OpenAPIV2.Document
 ): Promise<TsApiDocs> {
   const apiDoc = await SwaggerParser.dereference(api)
-  const namedSchemas = getNamedSchemas(apiDoc)
-  const anonymousSchemas = getAnonymousSchemas(apiDoc, namedSchemas)
-  cleanSchemas(
-    new Set([...Array.from(namedSchemas), ...Array.from(anonymousSchemas)])
-  )
-  const models = await getTsModels(namedSchemas, anonymousSchemas)
-  console.log("mlodels", models)
-  const endpoints = getTsEndpoints(apiDoc)
+  const normalizer = new SchemaNormalizer()
+  const { schemas, endpoints } = normalizer.extractEndpointsAndSchemas(apiDoc)
+  const models = await getTsModels(schemas)
   return { models, endpoints }
 }

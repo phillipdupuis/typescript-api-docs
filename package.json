@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@apidevtools/swagger-parser": "^10.0.2",
+    "@apidevtools/swagger-parser": "^10.0.3",
     "@chakra-ui/icons": "^1.0.13",
     "@chakra-ui/react": "^1.6.4",
     "@emotion/react": "^11.4.0",
@@ -19,6 +19,7 @@
     "framer-motion": "^4.1.17",
     "js-cookie": "^2.2.1",
     "json-schema-to-typescript": "^10.1.4",
+    "lodash": "^4.17.21",
     "openapi-types": "^9.0.3",
     "prettier": "^2.5.1",
     "react": "^17.0.2",
