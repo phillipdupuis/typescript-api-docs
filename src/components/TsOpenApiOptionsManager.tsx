@@ -18,7 +18,7 @@ import {
 import { AddIcon, DeleteIcon } from "@chakra-ui/icons"
 import { SiSwagger } from "react-icons/si"
 import { DEFAULT_OPEN_API_OPTIONS } from "src/environment"
-import { useTsApiDocs } from "src/tsApiDocs"
+import { useStore, selectors } from "src/stores/useStore"
 
 function isRequiredOption(openApiOption: string): boolean {
   return DEFAULT_OPEN_API_OPTIONS.includes(openApiOption)
@@ -26,21 +26,21 @@ function isRequiredOption(openApiOption: string): boolean {
 
 export const TsOpenApiOptionsManager: React.FC = () => {
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const { openApi, setOpenApi, openApiOptions, setOpenApiOptions } =
-    useTsApiDocs()
+  const openApi = useStore(selectors.openApi)
+  const openApiOptions = useStore(selectors.openApiOptions)
   const [newEntry, setNewEntry] = useState("")
 
   const addOption = () => {
     if (newEntry && !openApiOptions.includes(newEntry)) {
-      setOpenApiOptions([...openApiOptions, newEntry])
+      useStore.setState({ openApiOptions: [...openApiOptions, newEntry] })
       setNewEntry("")
     }
   }
 
   const deleteOption = (o: string) => {
-    setOpenApiOptions(openApiOptions.filter((v) => v !== o))
+    useStore.setState({ openApiOptions: openApiOptions.filter((v) => v !== o) })
     if (openApi === o) {
-      setOpenApi(undefined)
+      useStore.setState({ openApi: undefined })
     }
   }
 

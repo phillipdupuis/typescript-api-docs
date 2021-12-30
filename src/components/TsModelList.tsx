@@ -1,7 +1,9 @@
-import React, { useMemo } from "react"
+import React, { useMemo, useCallback } from "react"
 import { Box } from "@chakra-ui/react"
-import { useTsApiDocs, TsModel, TsModelDetail } from "src/tsApiDocs"
-import { EntityList } from "src/common/EntityList"
+import { EntityList } from "src/components/EntityList"
+import { TsModel } from "src/tsApiDocs/models"
+import { TsModelDetail } from "src/components/TsModelDetail"
+import { useStore } from "src/stores/useStore"
 
 const renderLabel = (m: TsModel) => <Box>{m.title}</Box>
 
@@ -18,7 +20,8 @@ const sortComparator = (a: TsModel, b: TsModel): number => {
 }
 
 export const TsModelList: React.FC = () => {
-  const { models } = useTsApiDocs()
+  // const { models } = useTsApiDocs()
+  const models = useStore(useCallback((state) => state.models, []))
   const instances = useMemo(
     () =>
       models === undefined
