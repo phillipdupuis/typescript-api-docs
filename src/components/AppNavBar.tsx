@@ -1,7 +1,7 @@
 import React from "react"
 import { Flex, Box, Heading, Spacer, Icon, Link } from "@chakra-ui/react"
 import { GoMarkGithub as GithubIcon } from "react-icons/go"
-import { ColorModeSwitcher } from "src/ColorModeSwitcher"
+import { ColorModeSwitcher } from "src/components/ColorModeSwitcher"
 
 const GithubLink: React.FC = () => (
   <Link href="https://github.com/phillipdupuis/typescript-api-docs" isExternal>

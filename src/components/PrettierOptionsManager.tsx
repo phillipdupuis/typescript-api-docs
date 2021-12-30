@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useCallback } from "react"
 import {
   Button,
   Stack,
@@ -21,7 +21,7 @@ import {
   useDisclosure,
 } from "@chakra-ui/react"
 import { SiTypescript } from "react-icons/si"
-import { usePrettier, PrettierOptions } from "src/prettier"
+import { usePrettierStore, FormatOptions } from "src/stores/usePrettierStore"
 
 type BooleanOptions =
   | "semi"
@@ -31,17 +31,7 @@ type BooleanOptions =
   | "removeComments"
 type NumericOptions = "tabWidth" | "printWidth"
 
-const DEFAULTS: PrettierOptions = {
-  semi: true,
-  singleQuote: false,
-  bracketSpacing: false,
-  useTabs: false,
-  tabWidth: 2,
-  printWidth: 80,
-  removeComments: false,
-}
-
-const LABELS: Record<keyof PrettierOptions, string> = {
+const LABELS: Record<keyof FormatOptions, string> = {
   semi: "Print semicolons at the ends of statements",
   singleQuote: "Use single quotes instead of double quotes",
   bracketSpacing: "Print spaces between brackets in object literals",
@@ -51,9 +41,9 @@ const LABELS: Record<keyof PrettierOptions, string> = {
   removeComments: "Remove comments",
 }
 
-type FieldProps<T, F extends keyof PrettierOptions> = T & { field: F }
+type FieldProps<T, F extends keyof FormatOptions> = T & { field: F }
 
-type Field<T, F extends keyof PrettierOptions> = React.ReactElement<
+type Field<T, F extends keyof FormatOptions> = React.ReactElement<
   FieldProps<T, F>
 >
 
@@ -61,14 +51,18 @@ const BooleanField = <T extends BooleanOptions>({
   field,
   ...props
 }: FieldProps<CheckboxProps, T>): Field<CheckboxProps, T> => {
-  const { options, setOptions } = usePrettier()
+  const value = usePrettierStore(
+    useCallback((state) => state.options[field], [field])
+  )
   return (
     <Checkbox
       {...props}
       size="md"
-      isChecked={options[field] ?? DEFAULTS[field]}
+      isChecked={value}
       onChange={(e) =>
-        setOptions((previous) => ({ ...previous, [field]: e.target.checked }))
+        usePrettierStore.setState(({ options }) => ({
+          options: { ...options, [field]: e.target.checked },
+        }))
       }
     >
       {LABELS[field]}
@@ -80,7 +74,9 @@ const NumberField = <T extends NumericOptions>({
   field,
   ...props
 }: FieldProps<NumberInputProps, T>): Field<NumberInputProps, T> => {
-  const { options, setOptions } = usePrettier()
+  const value = usePrettierStore(
+    useCallback((state) => state.options[field], [field])
+  )
   return (
     <>
       <FormLabel htmlFor={`prettier-${field}`} gridColumn={1} my="auto">
@@ -91,10 +87,12 @@ const NumberField = <T extends NumericOptions>({
         id={`prettier-${field}`}
         size="sm"
         gridColumn={2}
-        defaultValue={options[field] ?? DEFAULTS[field]}
+        defaultValue={value}
         onChange={(v) => {
           if (v !== "") {
-            setOptions((previous) => ({ ...previous, [field]: parseInt(v) }))
+            usePrettierStore.setState(({ options }) => ({
+              options: { ...options, [field]: parseInt(v) },
+            }))
           }
         }}
       >

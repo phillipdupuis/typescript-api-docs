@@ -1,12 +1,9 @@
 import React, { useMemo } from "react"
 import { Box, HStack, VStack, Tag, TagProps } from "@chakra-ui/react"
-import { EntityList } from "src/common/EntityList"
-import {
-  useTsApiDocs,
-  TsModelDetail,
-  TsEndpoint,
-  HttpMethod,
-} from "src/tsApiDocs"
+import { EntityList } from "src/components/EntityList"
+import { TsModelDetail } from "src/components/TsModelDetail"
+import { HttpMethod, TsEndpoint } from "src/tsApiDocs/models"
+import { useStore, selectors } from "src/stores/useStore"
 
 const httpMethodsSortOrder = [
   "get",
@@ -86,7 +83,7 @@ const sortComparator = (a: TsEndpoint, b: TsEndpoint): number => {
 }
 
 export const TsEndpointList: React.FC = () => {
-  const { endpoints } = useTsApiDocs()
+  const endpoints = useStore(selectors.endpoints)
   const items = useMemo(
     () =>
       endpoints === undefined

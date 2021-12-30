@@ -6,10 +6,10 @@ import {
   ButtonGroup,
   useMediaQuery,
 } from "@chakra-ui/react"
-import { useTransitionTimeout } from "src/common/hooks/useTransitionTimeout"
-import { useTsApiDocs } from "src/tsApiDocs"
-import { usePrettier } from "src/prettier/hooks"
-import { TsModel } from "./models"
+import { useTransitionTimeout } from "src/hooks/useTransitionTimeout"
+import { useStore, selectors } from "src/stores/useStore"
+import { usePrettierStore } from "src/stores/usePrettierStore"
+import { TsModel } from "src/tsApiDocs/models"
 
 /**
  * Ensure that there are at least 2 lines of content.
@@ -24,8 +24,8 @@ function padLines(code: string) {
  * Primary component for displaying a typescript definition generated from JSON schema.
  */
 export const TsModelDetail: React.FC<{ modelId: string }> = ({ modelId }) => {
-  const { models } = useTsApiDocs()
-  const prettier = usePrettier()
+  const models = useStore(selectors.models)
+  const prettier = usePrettierStore()
   const { format } = prettier
   const [widerThan50em] = useMediaQuery("(min-width: 50em)")
   const [copied, setCopied] = useTransitionTimeout(1500)
